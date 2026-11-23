@@ -297,7 +297,6 @@ details summary{cursor:pointer;font-weight:700;color:var(--cobalt)}
       <a href="#fiszki" data-view="fiszki">Fiszki</a>
       <a href="#quiz" data-view="quiz">Quiz</a>
       <a href="#pisanie" data-view="pisanie">Pisanie</a>
-      <a href="#sluchanie" data-view="sluchanie" id="navListen">Słuchanie</a>
       <a href="#cwiczenia" data-view="cwiczenia">Ćwiczenia</a>
       <a href="#gramatyka" data-view="gramatyka">Gramatyka</a>
       <a href="#odmiana" data-view="odmiana">Odmiana</a>
@@ -577,7 +576,6 @@ function badgeList(){
     ['e100','Pracowity','100 zadań z kart pracy', exDone >= 100, 'check'],
     ['e500','Wszystko zrobione','500 zadań z kart pracy', exDone >= 500, 'check'],
     ['xp1k','1000 XP','Zbierz 1000 XP', S.xp >= 1000, 'star'],
-    ['ear','Dobre ucho','20 słów rozpoznanych ze słuchu', (S.listenOk||0) >= 20, 'ear'],
     ['talk','Rozmówca','10 wiadomości w rozmowach z Lucíą', (S.chats||0) >= 10, 'ear'],
     ['talk50','Gaduła','50 wiadomości w rozmowach z Lucíą', (S.chats||0) >= 50, 'ear'],
   ];
@@ -799,7 +797,7 @@ function buildLesson(){
   const canSay = cap.dict && !S.noDict;
   due.forEach((w, n) => {
     if (canSay && n < 2 && shortWord(w) && box(w) >= 1) return practice.push({k:'say', w});
-    const kinds = ['quiz','quizpl','type'].concat(canSpeak && shortWord(w) ? ['listen'] : []);
+    const kinds = ['quiz','quizpl','type'];
     practice.push({k: box(w) >= 2 ? kinds[1 + Math.floor(Math.random()*(kinds.length-1))] : kinds[Math.floor(Math.random()*2)], w});
   });
   const exTodo = t.ex.map((e,i) => ({k:'ex', e, i, t:t.id})).filter(x => !S.exDone[x.t+'#'+x.i]);
@@ -807,7 +805,7 @@ function buildLesson(){
   shuffle(sentencePool(t)).slice(0, 2).forEach(s => practice.push({k:'order', s, t:t.id}));
   if (practice.length < 8) {
     const extra = shuffle(ALL.filter(w => w.cat === t.id && seenWord(w) && !due.includes(w))).slice(0, 8 - practice.length);
-    extra.forEach(w => practice.push({k: canSpeak && shortWord(w) && Math.random() < .3 ? 'listen' : 'type', w}));
+    extra.forEach(w => practice.push({k: 'type', w}));
   }
   return {items: [...items, ...shuffle(practice)]};
 }
@@ -1066,23 +1064,6 @@ Odpowiedz WYŁĄCZNIE obiektem JSON o polach:
   c.busy = false;
   if (view === 'rozmowa' && chat === c) { renderChat(); const i = $('#chatIn'); if (i) i.focus(); }
 }
-
-V.sluchanie = () => {
-  if (!canSpeak) { app.innerHTML = `<div><h2>Słuchanie</h2></div><p class="notice">Ta przeglądarka nie odtwarza mowy, więc ćwiczenie ze słuchu jest niedostępne.</p>`; return; }
-  let streak = 0;
-  const next = prev => {
-    let w = pickNext(prev), tries = 0;
-    while (w.es.length > 32 && tries++ < 20) w = pickNext(prev);
-    app.innerHTML = `<div><h2>Słuchanie</h2><p class="lede">Posłuchaj i wpisz, co słyszysz. Rodzajnik jest opcjonalny. „Wolniej” odtwarza nagranie w spokojniejszym tempie.</p></div>
-      ${vocabSelect()}
-      <div class="row spread"><span class="stat">Seria trafień <b>${streak}</b></span><span class="stat">Łącznie rozpoznanych <b>${S.listenOk||0}</b></span></div>
-      <section class="panel stack" id="slot"></section>`;
-    bindCat();
-    runItem($('#slot'), {k:'listen', w}, ok => { streak = ok ? streak + 1 : 0; next(w); });
-  };
-  next();
-  return e => { if (itemKeys) itemKeys(e); };
-};
 
 V.fiszki = () => {
   let cur = pickNext();
@@ -1406,13 +1387,15 @@ app.addEventListener('click', e => {
   f.focus(); f.setSelectionRange(s + 1, s + 1);
 });
 try { if (window.speechSynthesis) speechSynthesis.getVoices(); } catch(e) {}
-if (!canSpeak) $('#navListen').hidden = true;
 window.addEventListener('hashchange', route);
 
 
 /* ---------- group version: Supabase accounts, group code, ranking ---------- */
 const SB_URL = 'https://zkokxstnuvhrxphsiuja.supabase.co', SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inprb2t4c3RudXZocnhwaHNpdWphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU0NTcyNTMsImV4cCI6MjExMTAzMzI1M30.Wf5so1cM-g4QaFoMMNZCyD3qolDcwo0tesyw2Q3IdOE';
 let sb = null, me = null;
+// Supabase needs an e-mail, so a username becomes a technical address nobody sees; confirmations are off and no mail is ever sent.
+const USER_DOMAIN = '@uczen.hablemos.invalid';
+const userName = u => u && u.email ? u.email.replace(USER_DOMAIN, '') : '';
 function isoWeek(d = new Date()){
   const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day);
@@ -1426,10 +1409,10 @@ function weekXp(){
 }
 function errText(e){
   const m = String((e && (e.message || e.error_description)) || e || '');
-  if (/Invalid login credentials/i.test(m)) return 'Zły e-mail albo hasło.';
-  if (/already registered|already been registered/i.test(m)) return 'To konto już istnieje. Zaloguj się w zakładce „Mam konto”.';
+  if (/Invalid login credentials/i.test(m)) return 'Zła nazwa użytkownika albo hasło.';
+  if (/already registered|already been registered|already exists/i.test(m)) return 'Ta nazwa użytkownika jest zajęta. Wybierz inną albo zaloguj się w zakładce „Mam konto”.';
   if (/Password should be at least/i.test(m)) return 'Hasło musi mieć co najmniej 6 znaków.';
-  if (/valid email|invalid format|Unable to validate email/i.test(m)) return 'Wpisz poprawny adres e-mail.';
+  if (/valid email|invalid format|Unable to validate email/i.test(m)) return 'Ta nazwa użytkownika nie jest dozwolona. Użyj małych liter i cyfr.';
   if (/rate limit|too many/i.test(m)) return 'Za dużo prób. Odczekaj chwilę i spróbuj ponownie.';
   if (/Failed to fetch|NetworkError/i.test(m)) return 'Brak połączenia z internetem.';
   return 'Coś poszło nie tak: ' + m;
@@ -1444,7 +1427,8 @@ function showAuth(mode = 'login', msg = ''){
       <button type="button" data-auth="login" aria-pressed="${mode==='login'}">Mam konto</button>
       <button type="button" data-auth="signup" aria-pressed="${mode==='signup'}">Nowe konto</button></div>
     <form class="panel" id="authF" novalidate>
-      <label>E-mail<input class="field" id="aEmail" type="email" autocomplete="email" required></label>
+      <label>Nazwa użytkownika<input class="field" id="aUser" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" placeholder="np. kuba.n" required>
+        ${mode === 'signup' ? '<span style="font-weight:400;font-size:.82rem">3–20 znaków: małe litery, cyfry, kropka, myślnik albo podkreślnik.</span>' : ''}</label>
       <label>Hasło<input class="field" id="aPass" type="password" autocomplete="${mode==='login'?'current-password':'new-password'}" minlength="6" required></label>
       ${mode === 'signup' ? `<label>Kod grupy (od prowadzącego)<input class="field" id="aCode" autocomplete="off" autocapitalize="characters" placeholder="VIGO-…" required></label>` : ''}
       <p class="err" id="aErr" role="alert"></p>
@@ -1453,12 +1437,14 @@ function showAuth(mode = 'login', msg = ''){
     </form></section>`;
   $('#aErr').textContent = msg;
   app.querySelectorAll('[data-auth]').forEach(b => b.onclick = () => showAuth(b.dataset.auth));
-  $('#aEmail').focus();
+  $('#aUser').focus();
   $('#authF').onsubmit = async ev => {
     ev.preventDefault();
-    const email = $('#aEmail').value.trim(), password = $('#aPass').value, err = $('#aErr'), go = $('#aGo');
+    const uname = $('#aUser').value.trim().toLowerCase(), password = $('#aPass').value, err = $('#aErr'), go = $('#aGo');
     err.textContent = '';
-    if (!email || password.length < 6) { err.textContent = 'Podaj e-mail i hasło (min. 6 znaków).'; return; }
+    if (!/^[a-z0-9._-]{3,20}$/.test(uname)) { err.textContent = 'Nazwa użytkownika: 3–20 znaków, tylko małe litery (bez polskich znaków), cyfry, kropka, myślnik lub podkreślnik.'; return; }
+    if (password.length < 6) { err.textContent = 'Hasło musi mieć co najmniej 6 znaków.'; return; }
+    const email = uname + USER_DOMAIN;
     go.disabled = true; go.textContent = 'Chwileczkę…';
     try {
       if (mode === 'login') {
@@ -1550,9 +1536,9 @@ V.grupa = () => {
     </section>
     <section class="panel stack"><div class="row spread"><h3>Ranking tygodnia</h3><span class="label">${isoWeek()}</span></div><div id="rankList"><p class="lede">Wczytuję…</p></div></section>
     <div class="row spread"><span class="lede" id="whoami" style="font-size:.9rem"></span><button class="btn ghost" id="logout" type="button">Wyloguj</button></div>`;
-  $('#nickIn').value = S.nick || '';
+  $('#nickIn').value = S.nick || userName(me);
   $('#rankVis').checked = S.rankVisible !== false;
-  $('#whoami').textContent = me ? 'Zalogowano: ' + me.email : '';
+  $('#whoami').textContent = me ? 'Zalogowano jako ' + userName(me) : '';
   $('#logout').onclick = logout;
   const loadRank = async () => {
     const { data, error } = await sb.from('ranking').select('user_id,nick,week_xp,streak,mastered').eq('week', isoWeek()).order('week_xp', {ascending:false}).limit(100);
@@ -1587,7 +1573,10 @@ V.grupa = () => {
   sb = window.supabase.createClient(SB_URL, SB_KEY, {auth: {persistSession: true, autoRefreshToken: true, storageKey: 'hablemos-auth'}});
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return showAuth();
-  afterLogin(session.user).catch(() => showAuth('login', 'Sesja wygasła. Zaloguj się ponownie.'));
+  // a stored session can outlive its account (deleted or reset): confirm it with the server first
+  const { data: fresh, error: ue } = await sb.auth.getUser();
+  if (ue || !fresh || !fresh.user) { await sb.auth.signOut().catch(() => {}); return showAuth('login', 'Zaloguj się ponownie.'); }
+  afterLogin(fresh.user).catch(() => showAuth('login', 'Sesja wygasła. Zaloguj się ponownie.'));
 })();
 </script>
 </body>
