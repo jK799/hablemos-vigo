@@ -339,7 +339,7 @@ function buildData(course){
   (course ? course.verbs : []).forEach(v => vmap.set(v.inf, v));
   BASE_VERBS.forEach(v => { if (!vmap.has(v.inf)) vmap.set(v.inf, v); });
   VERBS = [...vmap.values()].sort((a,b) => (a.refl - b.refl) || a.inf.localeCompare(b.inf, 'es'));
-  ALL = TOPICS.flatMap(t => t.vocab.map(([es,pl]) => ({es, pl, cat:t.id})));
+  ALL = TOPICS.flatMap(t => t.vocab.map(([es,pl,alt]) => ({es, pl, alt, cat:t.id})));
   const seen = new Set(); UNIQ = ALL.filter(w => !seen.has(w.es) && seen.add(w.es));
 }
 
@@ -507,11 +507,11 @@ function norm(s){ return String(s).toLowerCase().replace(/[¿?¡!.,;:"„”«»
 const noArt = s => s.replace(/^(el|la|los|las|un|una|unos|unas)\s+/,'');
 const deacc = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 function cmp(a, b){ if (!a) return 'empty'; if (a === b) return 'ok'; if (deacc(a) === deacc(b)) return 'near'; return 'no'; }
-function judge(input, target){
+function judge(input, target, alt){
   const a = noArt(norm(input));
   // "a (letra A)", "ir / irse": the part in brackets is optional, and each "/" variant counts on its own
   const bare = String(target).replace(/\([^)]*\)/g, ' ');
-  const variants = [bare, ...String(target).split(/\s*\/\s*/), ...bare.split(/\s*\/\s*/)].map(v => noArt(norm(v))).filter(Boolean);
+  const variants = [bare, ...String(target).split(/\s*\/\s*/), ...bare.split(/\s*\/\s*/), ...(Array.isArray(alt) ? alt : [])].map(v => noArt(norm(v))).filter(Boolean);
   let best = a ? 'no' : 'empty';
   for (const v of [noArt(norm(target)), ...variants]) { const r = cmp(a, v); if (r === 'ok') return 'ok'; if (r === 'near') best = 'near'; }
   return best;
@@ -751,7 +751,7 @@ function runItem(el, item, onNext){
   } else if (item.k === 'say') {
     const mic = $('#mic', el), heard = $('#heard', el), d = cap.dict; let text = '';
     const evaluate = () => {
-      const r = judge(text, answer);
+      const r = judge(text, answer, w.alt);
       finish(r === 'no' ? 'no' : 'ok', text);
       if (r === 'no') heard.textContent = `Usłyszałem: „${text}”`;
     };
@@ -784,7 +784,7 @@ function runItem(el, item, onNext){
     $('#itf', el).onsubmit = ev => {
       ev.preventDefault();
       if (answered) return nx.click();
-      const r = w ? judge(inp.value, answer) : judgeEx(inp.value, answer, e && e.alt);
+      const r = w ? judge(inp.value, answer, w.alt) : judgeEx(inp.value, answer, e && e.alt);
       if (r === 'empty') return;
       inp.className = 'field ' + (r === 'no' ? 'no' : 'ok');
       finish(r, inp.value);
