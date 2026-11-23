@@ -461,7 +461,7 @@ function pickNext(prev){
 }
 const cap = {sample:null, tts:null, dict:null};
 let capsReady = Promise.resolve(), dataReady = false;
-let canSpeak = 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+let canSpeak = false; // pronunciation (buttons and read-aloud) removed on request
 let ttsNS = null;
 const cleanSay = t => String(t).replace(/[¿?¡!]/g,'').replace(/\s*\/\s*/g,', ').replace(/\(.*?\)/g,'').trim();
 function browserSpeak(text, slow){
@@ -478,6 +478,7 @@ function browserSpeak(text, slow){
 }
 // Claude's own voice when the viewer has it; the browser's Spanish voice otherwise
 function speak(t, slow){
+  if (!canSpeak) return;
   const text = cleanSay(t); if (!text) return;
   if (ttsNS) {
     ttsNS.speak(text, {language:'es', rate: slow ? 0.7 : 0.95}).catch(err => {
@@ -495,7 +496,7 @@ function stopSpeech(){
 }
 const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
 const SPK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
-const spkBtn = (t, size) => canSpeak ? `<button class="speak${size?' '+size:''}" type="button" data-say="${esc(t)}" aria-label="Wymowa: ${esc(t)}">${SPK}</button>` : '';
+const spkBtn = () => '';
 const levelDots = w => `<span class="level" title="Poziom ${box(w)} z ${MAXBOX}">${Array.from({length:MAXBOX},(_,i)=>`<i class="${i<box(w)?'on':''}"></i>`).join('')}</span>`;
 const catName = id => (topicById(id)||{}).name || 'Wszystkie';
 const wordCls = s => s.length > 22 ? 'word long' : 'word';
@@ -957,8 +958,7 @@ function drawPick(){
 function drawChat(){
   const dictOk = cap.dict && !S.noDict;
   $('#talk').innerHTML = `<div class="stack">
-    <div class="row spread"><button class="btn ghost" id="endChat" type="button">← Inne scenariusze</button>
-      <label class="row" style="gap:6px;color:var(--muted);font-size:.9rem"><input type="checkbox" id="autoSp" ${S.autoSpeak?'checked':''}> Czytaj odpowiedzi na głos</label></div>
+    <div class="row spread"><button class="btn ghost" id="endChat" type="button">← Inne scenariusze</button></div>
     <span class="label">${esc(chat.scen.name)}</span>
     <section class="panel chat" id="chatLog" aria-live="polite"></section>
     <div class="chips" id="hints"></div>
@@ -970,7 +970,6 @@ function drawChat(){
     ${accentsHTML()}
   </div>`;
   $('#endChat').onclick = () => { chat = null; stopSpeech(); drawPick(); };
-  $('#autoSp').onchange = ev => { S.autoSpeak = ev.target.checked; save(); };
   $('#chatF').onsubmit = ev => { ev.preventDefault(); const v = $('#chatIn').value.trim(); if (!v || chat.busy) return; $('#chatIn').value = ''; userTurn(v); };
   const mic = $('#chatMic');
   if (mic) {
@@ -1419,53 +1418,77 @@ function errText(e){
 }
 function hideChrome(hide){ document.querySelector('nav').hidden = hide; document.querySelector('.stats').hidden = hide; document.querySelector('.goal').hidden = hide; }
 
-function showAuth(mode = 'login', msg = ''){
+// Login is the username alone: the password is derived from username + group code, and the code is remembered on the device.
+async function derivePw(uname, code){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(uname + '|' + code.trim().toUpperCase() + '|hablemos-v1'));
+  return 'h1-' + [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, '0')).join('').slice(0, 40);
+}
+function savedCode(){ try { return localStorage.getItem('hablemos-code') || ''; } catch(e) { return ''; } }
+function rememberCode(c){ try { if (c) localStorage.setItem('hablemos-code', c.trim().toUpperCase()); else localStorage.removeItem('hablemos-code'); } catch(e) {} }
+function showAuth(msg = '', askCode = false){
   hideChrome(true);
+  const sc = savedCode(), needCode = askCode || !sc;
   app.innerHTML = `<section class="auth">
-    <div><h2>Witaj w Hablemos</h2><p class="lede">Aplikacja do nauki hiszpańskiego dla grupy Vigo. Twój postęp zapisuje się na Twoim koncie.</p></div>
-    <div class="toggle" role="group" aria-label="Logowanie lub rejestracja">
-      <button type="button" data-auth="login" aria-pressed="${mode==='login'}">Mam konto</button>
-      <button type="button" data-auth="signup" aria-pressed="${mode==='signup'}">Nowe konto</button></div>
+    <div><h2>Witaj w Hablemos</h2><p class="lede">Nauka hiszpańskiego dla grupy Vigo. Wpisz swoją nazwę użytkownika. Jeśli jesteś tu pierwszy raz, założymy Ci konto.</p></div>
     <form class="panel" id="authF" novalidate>
       <label>Nazwa użytkownika<input class="field" id="aUser" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" placeholder="np. kuba.n" required>
-        ${mode === 'signup' ? '<span style="font-weight:400;font-size:.82rem">3–20 znaków: małe litery, cyfry, kropka, myślnik albo podkreślnik.</span>' : ''}</label>
-      <label>Hasło<input class="field" id="aPass" type="password" autocomplete="${mode==='login'?'current-password':'new-password'}" minlength="6" required></label>
-      ${mode === 'signup' ? `<label>Kod grupy (od prowadzącego)<input class="field" id="aCode" autocomplete="off" autocapitalize="characters" placeholder="VIGO-…" required></label>` : ''}
+        <span style="font-weight:400;font-size:.82rem">3–20 znaków: małe litery, cyfry, kropka, myślnik albo podkreślnik.</span></label>
+      <label id="codeWrap" ${needCode ? '' : 'hidden'}>Kod grupy (od prowadzącego, wpisujesz raz na urządzeniu)<input class="field" id="aCode" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="VIGO-…"></label>
       <p class="err" id="aErr" role="alert"></p>
-      <button class="btn primary big" id="aGo">${mode === 'login' ? 'Zaloguj się' : 'Załóż konto'}</button>
-      ${mode === 'login' ? '<p class="lede" style="margin:0;font-size:.85rem">Nie pamiętasz hasła? Napisz do osoby, która dała Ci link, a zresetuje je.</p>' : '<p class="lede" style="margin:0;font-size:.85rem">Hasło: co najmniej 6 znaków. Nie wysyłamy żadnych maili.</p>'}
-    </form></section>`;
+      <button class="btn primary big" id="aGo">Wejdź</button>
+      ${needCode ? '' : '<button class="btn ghost" id="chgCode" type="button">Inny kod grupy</button>'}
+    </form>
+    <section class="panel stack" id="newAcc" hidden>
+      <h3 id="newAccT"></h3>
+      <p class="lede" style="margin:0">Jeśli masz już konto, sprawdź, czy dobrze wpisujesz nazwę.</p>
+      <div class="row"><button class="btn primary" id="newYes" type="button">Załóż konto</button><button class="btn ghost" id="newNo" type="button">Popraw nazwę</button></div>
+    </section></section>`;
   $('#aErr').textContent = msg;
-  app.querySelectorAll('[data-auth]').forEach(b => b.onclick = () => showAuth(b.dataset.auth));
+  $('#aCode').value = sc;
+  const cc = $('#chgCode'); if (cc) cc.onclick = () => showAuth('', true);
   $('#aUser').focus();
+  const go = $('#aGo'), err = $('#aErr');
+  const busy = on => { go.disabled = on; go.textContent = on ? 'Chwileczkę…' : 'Wejdź'; };
+  const done = async code => { rememberCode(code); await afterLogin((await sb.auth.getUser()).data.user); };
   $('#authF').onsubmit = async ev => {
     ev.preventDefault();
-    const uname = $('#aUser').value.trim().toLowerCase(), password = $('#aPass').value, err = $('#aErr'), go = $('#aGo');
-    err.textContent = '';
+    const uname = $('#aUser').value.trim().toLowerCase(), code = $('#aCode').value.trim().toUpperCase();
+    err.textContent = ''; $('#newAcc').hidden = true;
     if (!/^[a-z0-9._-]{3,20}$/.test(uname)) { err.textContent = 'Nazwa użytkownika: 3–20 znaków, tylko małe litery (bez polskich znaków), cyfry, kropka, myślnik lub podkreślnik.'; return; }
-    if (password.length < 6) { err.textContent = 'Hasło musi mieć co najmniej 6 znaków.'; return; }
-    const email = uname + USER_DOMAIN;
-    go.disabled = true; go.textContent = 'Chwileczkę…';
+    if (!code) { $('#codeWrap').hidden = false; $('#aCode').focus(); err.textContent = 'Wpisz kod grupy.'; return; }
+    busy(true);
     try {
-      if (mode === 'login') {
-        const { data, error } = await sb.auth.signInWithPassword({email, password});
-        if (error) throw error;
-        await afterLogin(data.user);
-      } else {
-        const code = $('#aCode').value.trim();
-        if (!code) { throw {message: 'Wpisz kod grupy.'}; }
-        const { data, error } = await sb.auth.signUp({email, password});
-        if (error) throw error;
-        if (!data.session) { const r = await sb.auth.signInWithPassword({email, password}); if (r.error) throw r.error; }
-        const { data: ok, error: e2 } = await sb.rpc('join_group', {code});
-        if (e2) throw e2;
-        if (!ok) { showCode('Konto założone, ale kod grupy jest niepoprawny. Sprawdź go i wpisz ponownie.'); return; }
-        await afterLogin((await sb.auth.getUser()).data.user);
-      }
-    } catch(e) {
-      err.textContent = e && e.message === 'Wpisz kod grupy.' ? e.message : errText(e);
-      go.disabled = false; go.textContent = mode === 'login' ? 'Zaloguj się' : 'Załóż konto';
-    }
+      const email = uname + USER_DOMAIN, password = await derivePw(uname, code);
+      const r = await sb.auth.signInWithPassword({email, password});
+      if (!r.error) return await done(code);
+      if (!/Invalid login credentials/i.test(r.error.message)) throw r.error;
+      const { data: ok, error: ce } = await sb.rpc('check_code', {code});
+      if (ce) throw ce;
+      if (!ok) { rememberCode(''); $('#codeWrap').hidden = false; $('#aCode').value = ''; $('#aCode').focus(); err.textContent = 'Ten kod grupy jest niepoprawny.'; busy(false); return; }
+      // the code is right but there is no such account yet: ask before creating one (a typo would otherwise make a second account)
+      busy(false);
+      $('#newAccT').textContent = `Nie ma jeszcze konta „${uname}”. Założyć je?`;
+      $('#newAcc').hidden = false; $('#newYes').focus();
+      $('#newNo').onclick = () => { $('#newAcc').hidden = true; $('#aUser').focus(); $('#aUser').select(); };
+      $('#newYes').onclick = async () => {
+        $('#newYes').disabled = true; $('#newYes').textContent = 'Zakładam…';
+        try {
+          const su = await sb.auth.signUp({email, password});
+          if (su.error) {
+            if (/already registered|already been registered|already exists/i.test(su.error.message)) throw {message: 'Nie da się wejść na to konto tym kodem. Napisz do osoby, która dała Ci link.'};
+            throw su.error;
+          }
+          if (!su.data.session) { const r2 = await sb.auth.signInWithPassword({email, password}); if (r2.error) throw r2.error; }
+          const { data: joined, error: je } = await sb.rpc('join_group', {code});
+          if (je) throw je;
+          if (!joined) throw {message: 'Ten kod grupy jest niepoprawny.'};
+          await done(code);
+        } catch(e) {
+          $('#newAcc').hidden = true;
+          err.textContent = e && e.message && !e.code && !e.status ? e.message : errText(e);
+        }
+      };
+    } catch(e) { err.textContent = errText(e); busy(false); }
   };
 }
 function showCode(msg = ''){
@@ -1529,14 +1552,14 @@ V.grupa = () => {
     <section class="panel stack">
       <h3>Twój pseudonim</h3>
       <form id="nickF" class="answerline" autocomplete="off">
-        <input class="field" id="nickIn" maxlength="24" placeholder="np. Kuba" aria-label="Pseudonim" style="flex:1 1 200px;font-size:1rem">
+        <input class="field" id="nickIn" maxlength="24" placeholder="np. Kuba (inny niż nazwa użytkownika)" aria-label="Pseudonim" style="flex:1 1 200px;font-size:1rem">
         <button class="btn primary">Zapisz</button></form>
       <label class="row" style="gap:8px;color:var(--muted)"><input type="checkbox" id="rankVis"> Pokazuj mnie w rankingu grupy</label>
       <p class="err" id="nickErr" role="alert"></p>
     </section>
     <section class="panel stack"><div class="row spread"><h3>Ranking tygodnia</h3><span class="label">${isoWeek()}</span></div><div id="rankList"><p class="lede">Wczytuję…</p></div></section>
     <div class="row spread"><span class="lede" id="whoami" style="font-size:.9rem"></span><button class="btn ghost" id="logout" type="button">Wyloguj</button></div>`;
-  $('#nickIn').value = S.nick || userName(me);
+  $('#nickIn').value = S.nick || '';
   $('#rankVis').checked = S.rankVisible !== false;
   $('#whoami').textContent = me ? 'Zalogowano jako ' + userName(me) : '';
   $('#logout').onclick = logout;
@@ -1575,8 +1598,8 @@ V.grupa = () => {
   if (!session) return showAuth();
   // a stored session can outlive its account (deleted or reset): confirm it with the server first
   const { data: fresh, error: ue } = await sb.auth.getUser();
-  if (ue || !fresh || !fresh.user) { await sb.auth.signOut().catch(() => {}); return showAuth('login', 'Zaloguj się ponownie.'); }
-  afterLogin(fresh.user).catch(() => showAuth('login', 'Sesja wygasła. Zaloguj się ponownie.'));
+  if (ue || !fresh || !fresh.user) { await sb.auth.signOut().catch(() => {}); return showAuth('Zaloguj się ponownie.'); }
+  afterLogin(fresh.user).catch(() => showAuth('Sesja wygasła. Zaloguj się ponownie.'));
 })();
 </script>
 </body>
